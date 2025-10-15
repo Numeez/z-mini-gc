@@ -30,24 +30,36 @@ const SnekObject = struct {
     fn refCountInc(self: ?*SnekObject) void {
         self.?.referenceCount += 1;
     }
-    fn decCountInc(self: *?*SnekObject, allocator: std.mem.Allocator) void {
-        if (self.* == null) {
+    fn decCountInc(self: ?*SnekObject, allocator: std.mem.Allocator) void {
+        if (self == null) {
             return;
         }
-        self.*.?.referenceCount -= 1;
-        if (self.*.?.referenceCount == 0) {
-            self.*.?.refCountFree(allocator);
-            self.* = null;
+        self.?.referenceCount -= 1;
+        if (self.?.referenceCount == 0) {
+            SnekObject.refCountFree(self.?, allocator);
         }
     }
-    fn refCountFree(self: *SnekObject, allocator: std.mem.Allocator) void {
-        switch (self.kind) {
-            SnekObjectKind.INTEGER, SnekObjectKind.FLOAT => allocator.destroy(self),
-            SnekObjectKind.STRING => {
-                allocator.free(self.data.v_string);
-                allocator.destroy(self);
+    fn refCountFree(object: *SnekObject, allocator: std.mem.Allocator) void {
+        switch (object.kind) {
+            SnekObjectKind.INTEGER, SnekObjectKind.FLOAT => {
+                allocator.destroy(object);
             },
-            else => {},
+            SnekObjectKind.STRING => {
+                allocator.free(object.data.v_string);
+                allocator.destroy(object);
+            },
+            SnekObjectKind.VECTOR3 => {
+                SnekObject.decCountInc(object.data.v_vector3.x, allocator);
+                SnekObject.decCountInc(object.data.v_vector3.y, allocator);
+                SnekObject.decCountInc(object.data.v_vector3.z, allocator);
+                allocator.destroy(object);
+            },
+            SnekObjectKind.ARRAY => {
+                for (object.data.v_array.elements) |element| {
+                    SnekObject.decCountInc(element, allocator);
+                }
+                allocator.destroy(object);
+            },
         }
     }
     fn newSnekInteger(allocator: std.mem.Allocator, value: i64) ?*SnekObject {
@@ -82,6 +94,9 @@ const SnekObject = struct {
             return null;
         };
         obj.kind = SnekObjectKind.VECTOR3;
+        SnekObject.refCountInc(x);
+        SnekObject.refCountInc(y);
+        SnekObject.refCountInc(z);
         const value = SnekVector{ .x = x, .y = y, .z = z };
         obj.data = SnekObjectData{ .v_vector3 = value };
         return obj;
@@ -91,7 +106,7 @@ const SnekObject = struct {
             return null;
         };
         errdefer allocator.destroy(obj);
-        const snekObjectData = allocator.alloc(*SnekObject, size) catch {
+        const snekObjectData = allocator.alloc(?*SnekObject, size) catch {
             return null;
         };
         errdefer allocator.free(snekObjectData);
@@ -109,16 +124,23 @@ const SnekVector = struct {
 };
 const SnekArray = struct {
     size: usize,
-    elements: []*SnekObject,
+    elements: []?*SnekObject,
 
-    fn set(self: *SnekArray, index: usize, value: ?*SnekObject) bool {
+    fn set(self: *SnekArray, index: usize, value: ?*SnekObject, allocator: std.mem.Allocator) bool {
         if (value == null) {
             return false;
         }
         if (self.size - 1 < index) {
             return false;
         }
-        self.elements[index] = value.?;
+        value.?.referenceCount += 1;
+        if (self.elements[index] != null) {
+            const old = self.elements[index];
+            SnekObject.decCountInc(old, allocator);
+            self.elements[index] = value.?;
+        } else {
+            self.elements[index] = value.?;
+        }
         return true;
     }
     fn get(self: *SnekArray, index: usize) ?*SnekObject {
@@ -186,13 +208,13 @@ fn add(allocator: std.mem.Allocator, a: ?*SnekObject, b: ?*SnekObject) ?*SnekObj
                 const size = lengthA + lengthB;
                 const obj = SnekObject.newSnekArray(allocator, size);
                 for (a.?.data.v_array.elements, 0..) |data, index| {
-                    const result = obj.?.data.v_array.set(index, data);
+                    const result = obj.?.data.v_array.set(index, data,allocator);
                     if (result) {
                         return null;
                     }
                 }
                 for (b.?.data.v_array.elements, 0..) |data, index| {
-                    const result = obj.?.data.v_array.set(a.?.data.v_array.size + index + index, data);
+                    const result = obj.?.data.v_array.set(a.?.data.v_array.size + index + index, data,allocator);
                     if (result) {
                         return null;
                     }
@@ -305,13 +327,13 @@ test "test array object set and get" {
     defer allocator.destroy(value1.?);
     const value2 = SnekObject.newSnekInteger(allocator, 36);
     defer allocator.destroy(value2.?);
-    try expect(obj.?.data.v_array.set(0, value1));
-    try expect(obj.?.data.v_array.set(1, value2));
+    try expect(obj.?.data.v_array.set(0, value1,allocator));
+    try expect(obj.?.data.v_array.set(1, value2,allocator));
 
     try expect(obj.?.data.v_array.get(0).?.data.v_int == 25);
     try expect(obj.?.data.v_array.get(1).?.data.v_int == 36);
 
-    try expect(!obj.?.data.v_array.set(15, value1));
+    try expect(!obj.?.data.v_array.set(15, value1,allocator));
     try expect(obj.?.data.v_array.get(13) == null);
 }
 
@@ -435,14 +457,28 @@ test "testing the reference count of the object" {
 
 test "testing decrement ref count" {
     const allocator = std.testing.allocator;
-    var x = SnekObject.newSnekInteger(allocator, 1);
-    defer if(x!=null){
-        allocator.destroy(x.?);
-    };
+    const x = SnekObject.newSnekInteger(allocator, 1);
     try expect(x.?.referenceCount == 1);
     SnekObject.refCountInc(x);
-    SnekObject.decCountInc(&x, allocator);
+    SnekObject.decCountInc(x, allocator);
     try expect(x.?.referenceCount == 1);
-    SnekObject.decCountInc(&x, allocator);
-    SnekObject.decCountInc(&x, allocator);
+    SnekObject.decCountInc(x, allocator);
+}
+
+test "freeing of vector" {
+    const allocator = std.testing.allocator;
+    const x = SnekObject.newSnekInteger(allocator, 1);
+    const y = SnekObject.newSnekInteger(allocator, 2);
+    const z = SnekObject.newSnekInteger(allocator, 3);
+    const result = SnekObject.newSnekVector3(allocator, x, y, z);
+    try expect(x.?.referenceCount == 2);
+    try expect(y.?.referenceCount == 2);
+    try expect(z.?.referenceCount == 2);
+    SnekObject.decCountInc(x, allocator);
+    try expect(x.?.referenceCount == 1);
+    SnekObject.decCountInc(result, allocator);
+    try expect(y.?.referenceCount == 1);
+    try expect(z.?.referenceCount == 1);
+    SnekObject.decCountInc(y, allocator);
+    SnekObject.decCountInc(z, allocator);
 }
