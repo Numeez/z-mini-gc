@@ -58,6 +58,7 @@ const SnekObject = struct {
                 for (object.data.v_array.elements) |element| {
                     SnekObject.decCountInc(element, allocator);
                 }
+                allocator.free(object.data.v_array.elements);
                 allocator.destroy(object);
             },
         }
@@ -209,13 +210,13 @@ fn add(allocator: std.mem.Allocator, a: ?*SnekObject, b: ?*SnekObject) ?*SnekObj
                 const size = lengthA + lengthB;
                 const obj = SnekObject.newSnekArray(allocator, size);
                 for (a.?.data.v_array.elements, 0..) |data, index| {
-                    const result = obj.?.data.v_array.set(index, data,allocator);
+                    const result = obj.?.data.v_array.set(index, data, allocator);
                     if (result) {
                         return null;
                     }
                 }
                 for (b.?.data.v_array.elements, 0..) |data, index| {
-                    const result = obj.?.data.v_array.set(a.?.data.v_array.size + index + index, data,allocator);
+                    const result = obj.?.data.v_array.set(a.?.data.v_array.size + index + index, data, allocator);
                     if (result) {
                         return null;
                     }
@@ -328,13 +329,13 @@ test "test array object set and get" {
     defer allocator.destroy(value1.?);
     const value2 = SnekObject.newSnekInteger(allocator, 36);
     defer allocator.destroy(value2.?);
-    try expect(obj.?.data.v_array.set(0, value1,allocator));
-    try expect(obj.?.data.v_array.set(1, value2,allocator));
+    try expect(obj.?.data.v_array.set(0, value1, allocator));
+    try expect(obj.?.data.v_array.set(1, value2, allocator));
 
     try expect(obj.?.data.v_array.get(0).?.data.v_int == 25);
     try expect(obj.?.data.v_array.get(1).?.data.v_int == 36);
 
-    try expect(!obj.?.data.v_array.set(15, value1,allocator));
+    try expect(!obj.?.data.v_array.set(15, value1, allocator));
     try expect(obj.?.data.v_array.get(13) == null);
 }
 
@@ -482,5 +483,18 @@ test "freeing of vector" {
     try expect(z.?.referenceCount == 1);
     SnekObject.decCountInc(y, allocator);
     SnekObject.decCountInc(z, allocator);
+}
 
+test "freeing of array" {
+    const allocator = std.testing.allocator;
+    const x = SnekObject.newSnekInteger(allocator, 1);
+    const array = SnekObject.newSnekArray(allocator, 1);
+    const result= array.?.data.v_array.set(0, x, allocator);
+    try expect(result);
+    try expect(x.?.referenceCount == 2);
+    try expect(array.?.referenceCount == 1);
+    SnekObject.decCountInc(array, allocator);
+    try expect(x.?.referenceCount == 1);
+    SnekObject.decCountInc(x, allocator);
+    
 }
