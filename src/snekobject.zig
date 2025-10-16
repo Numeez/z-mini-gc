@@ -110,6 +110,7 @@ const SnekObject = struct {
             return null;
         };
         errdefer allocator.free(snekObjectData);
+        for (snekObjectData) |*slot| slot.* = null;
         obj.kind = SnekObjectKind.ARRAY;
         const value = SnekArray{ .size = size, .elements = snekObjectData };
         obj.data = SnekObjectData{ .v_array = value };
@@ -133,7 +134,7 @@ const SnekArray = struct {
         if (self.size - 1 < index) {
             return false;
         }
-        value.?.referenceCount += 1;
+        SnekObject.refCountInc(value);
         if (self.elements[index] != null) {
             const old = self.elements[index];
             SnekObject.decCountInc(old, allocator);
@@ -481,4 +482,5 @@ test "freeing of vector" {
     try expect(z.?.referenceCount == 1);
     SnekObject.decCountInc(y, allocator);
     SnekObject.decCountInc(z, allocator);
+
 }
