@@ -2,7 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const expect = std.testing.expect;
 
-fn Stack(comptime T: type) type {
+const StackFrame = @import("vm.zig").StackFrame;
+
+pub fn Stack(comptime T: type) type {
     return struct {
         items: []T,
         capacity: usize,
@@ -10,9 +12,14 @@ fn Stack(comptime T: type) type {
         allocator: Allocator,
         const Self = @This();
 
-        pub fn init(allocator: Allocator, capacity: usize) !Self {
+        pub fn init(allocator: Allocator, capacity: usize) !*Self {
+            var stack = try allocator.create(Stack(T));
             var buff = try allocator.alloc(T, capacity);
-            return .{ .allocator = allocator, .items = buff[0..], .capacity = capacity, .length = 0 };
+            stack.allocator = allocator;
+            stack.items = buff[0..];
+            stack.capacity = capacity;
+            stack.length = 0;
+            return stack;
         }
 
         pub fn push(self: *Self, element: T) !void {
@@ -35,6 +42,7 @@ fn Stack(comptime T: type) type {
 
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.items);
+            self.allocator.destroy(self);
         }
     };
 }
@@ -43,9 +51,14 @@ test "Check stack data structure" {
     const allocator = std.testing.allocator;
     var stack = try Stack(u32).init(allocator, 8);
     defer stack.deinit();
-    try expect(stack.capacity==8);
-    try expect(stack.length==0);
+    try expect(stack.capacity == 8);
+    try expect(stack.length == 0);
     try stack.push(12);
-    try expect(stack.length==1);
-    try expect(stack.items[0]==12);
+    try expect(stack.length == 1);
+    try expect(stack.items[0] == 12);
+    stack.pop();
+    try expect(stack.length == 0);
+    stack.pop();
+    stack.pop();
+    stack.pop();
 }
