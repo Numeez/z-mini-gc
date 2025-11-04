@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const expect = std.testing.expect;
 
 fn Stack(comptime T: type) type {
     return struct {
@@ -36,4 +37,15 @@ fn Stack(comptime T: type) type {
             self.allocator.free(self.items);
         }
     };
+}
+
+test "Check stack data structure" {
+    const allocator = std.testing.allocator;
+    var stack = try Stack(u32).init(allocator, 8);
+    defer stack.deinit();
+    try expect(stack.capacity==8);
+    try expect(stack.length==0);
+    try stack.push(12);
+    try expect(stack.length==1);
+    try expect(stack.items[0]==12);
 }
